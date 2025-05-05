@@ -1,5 +1,3 @@
-import pickle
-import os
 import re
 
 from . import symbols
@@ -60,15 +58,12 @@ def refine_syllables(syllables):
             tones.append(tone)
     return phonemes, tones
 
-
-# model_id = 'bert-base-uncased'
 model_id = 'dccuchile/bert-base-spanish-wwm-uncased'
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 
 def g2p(text, pad_start_end=True, tokenized=None):
     if tokenized is None:
         tokenized = tokenizer.tokenize(text)
-    # import pdb; pdb.set_trace()
     phs = []
     ph_groups = []
     for t in tokenized:
@@ -80,7 +75,6 @@ def g2p(text, pad_start_end=True, tokenized=None):
     phones = []
     tones = []
     word2ph = []
-    # print(ph_groups)
     for group in ph_groups:
         w = "".join(group)
         phone_len = 0
@@ -96,9 +90,6 @@ def g2p(text, pad_start_end=True, tokenized=None):
             phone_len += 1
         aaa = distribute_phone(phone_len, word_len)
         word2ph += aaa
-        # print(phone_list, aaa)
-        # print('=' * 10)
-
     if pad_start_end:
         phones = ["_"] + phones + ["_"]
         tones = [0] + tones + [0]
@@ -108,15 +99,4 @@ def g2p(text, pad_start_end=True, tokenized=None):
 def get_bert_feature(text, word2ph, device=None):
     from text import spanish_bert
     return spanish_bert.get_bert_feature(text, word2ph, device=device)
-
-if __name__ == "__main__":
-    text = "en nuestros tiempos estos dos pueblos ilustres empiezan a curarse, gracias sólo a la sana y vigorosa higiene de 1789."
-    # print(text)
-    text = text_normalize(text)
-    print(text)
-    phones, tones, word2ph = g2p(text)
-    bert = get_bert_feature(text, word2ph)
-    print(phones)
-    print(len(phones), tones, sum(word2ph), bert.shape)
-
 

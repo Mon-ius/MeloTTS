@@ -2,9 +2,9 @@
 # compatible with Julius https://github.com/julius-speech/segmentation-kit
 import re
 import unicodedata
-
+from num2words import num2words
 from transformers import AutoTokenizer
-
+from pykakasi import kakasi
 from . import symbols
 punctuation = ["!", "?", "…", ",", ".", "'", "-"]
 
@@ -12,7 +12,7 @@ try:
     import MeCab
 except ImportError as e:
     raise ImportError("Japanese requires mecab-python3 and unidic-lite.") from e
-from num2words import num2words
+
 
 _CONVRULES = [
     # Conversion of 2 letters
@@ -318,10 +318,6 @@ _CONVRULES = [
     "・/ ,",
 ]
 
-_COLON_RX = re.compile(":+")
-_REJECT_RX = re.compile("[^ a-zA-Z:,.?]")
-
-
 def _makerulemap():
     l = [tuple(x.split("/")) for x in _CONVRULES]
     return tuple({k: v for k, v in l if len(k) == i} for i in (1, 2))
@@ -348,7 +344,6 @@ def kata2phoneme(text: str) -> str:
             continue
         res.append(text[0])
         text = text[1:]
-    # res = _COLON_RX.sub(":", res)
     return res
 
 
@@ -536,7 +531,7 @@ def replace_punctuation(text):
 
     return replaced_text
 
-from pykakasi import kakasi
+
 # Initialize kakasi object
 kakasi = kakasi()
 # Set options for converting Chinese characters to Katakana
@@ -564,8 +559,6 @@ def distribute_phone(n_phone, n_word):
 
 
 
-# tokenizer = AutoTokenizer.from_pretrained('cl-tohoku/bert-base-japanese-v3')
-
 model_id = 'tohoku-nlp/bert-base-japanese-v3'
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 def g2p(norm_text):
@@ -591,10 +584,7 @@ def g2p(norm_text):
             phs += [text]
             word2ph += [1]
             continue
-        # import pdb; pdb.set_trace()
-        # phonemes = japanese_text_to_phonemes(text)
         phonemes = kata2phoneme(text)
-        # phonemes = [i for i in phonemes if i in symbols]
         for i in phonemes:
             assert i in symbols, (group, norm_text, tokenized, i)
         phone_len = len(phonemes)
@@ -615,33 +605,3 @@ def get_bert_feature(text, word2ph, device):
     from text import japanese_bert
 
     return japanese_bert.get_bert_feature(text, word2ph, device=device)
-
-
-if __name__ == "__main__":
-    # tokenizer = AutoTokenizer.from_pretrained("./bert/bert-base-japanese-v3")
-    text = "こんにちは、世界！..."
-    text = 'ええ、僕はおきなと申します。こちらの小さいわらべは杏子。ご挨拶が遅れてしまいすみません。あなたの名は?'
-    text = 'あの、お前以外のみんなは、全員生きてること?'
-    from text.japanese_bert import get_bert_feature
-
-    text = text_normalize(text)
-    print(text)
-    phones, tones, word2ph = g2p(text)
-    bert = get_bert_feature(text, word2ph)
-
-    print(phones, tones, word2ph, bert.shape)
-
-# if __name__ == '__main__':
-#     from pykakasi import kakasi
-#     # Initialize kakasi object
-#     kakasi = kakasi()
-
-#     # Set options for converting Chinese characters to Katakana
-#     kakasi.setMode("J", "H")  # Chinese to Katakana
-#     kakasi.setMode("K", "H")  # Hiragana to Katakana
-
-#     # Convert Chinese characters to Katakana
-#     conv = kakasi.getConverter()
-#     katakana_text = conv.do('ええ、僕はおきなと申します。こちらの小さいわらべは杏子。ご挨拶が遅れてしまいすみません。あなたの名は?')  # Replace with your Chinese text
-
-#     print(katakana_text)  # Output: ニーハオセカイ

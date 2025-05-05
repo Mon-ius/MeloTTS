@@ -8,18 +8,18 @@ model = None
 
 def get_bert_feature(text, word2ph, device=None):
     global model
-    if (
-        sys.platform == "darwin"
-        and torch.backends.mps.is_available()
-        and device == "cpu"
-    ):
-        device = "mps"
-    if not device:
-        device = "cuda"
+    
+    if device is None:
+        if sys.platform == "darwin" and torch.backends.mps.is_available():
+            device = "mps"
+        elif torch.cuda.is_available():
+            device = "cuda"
+        else:
+            device = "cpu"
+    
     if model is None:
-        model = AutoModelForMaskedLM.from_pretrained(model_id).to(
-            device
-        )
+        model = AutoModelForMaskedLM.from_pretrained(model_id).to(device)
+    
     with torch.no_grad():
         inputs = tokenizer(text, return_tensors="pt")
         for i in inputs:
@@ -33,7 +33,7 @@ def get_bert_feature(text, word2ph, device=None):
     for i in range(len(word2phone)):
         repeat_feature = res[i].repeat(word2phone[i], 1)
         phone_level_feature.append(repeat_feature)
-
+    
     phone_level_feature = torch.cat(phone_level_feature, dim=0)
-
+    
     return phone_level_feature.T

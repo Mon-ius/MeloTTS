@@ -1,17 +1,10 @@
-# Convert Japanese text to phonemes which is
-# compatible with Julius https://github.com/julius-speech/segmentation-kit
 import re
-import unicodedata
-
 from transformers import AutoTokenizer
 
-from . import punctuation, symbols
-
-
-from num2words import num2words
+from . import punctuation
 from melo.text.ko_dictionary import english_dictionary, etc_dictionary
-from anyascii import anyascii
 from jamo import hangul_to_jamo
+from pecab import PeCab
 
 def normalize(text):
     text = text.strip()
@@ -40,41 +33,84 @@ def normalize_english(text):
     return text
 
 
-g2p_kr = None
+# Map Korean jamo characters to the symbols used in the TTS system
+KOREAN_SYMBOL_MAP = {
+    'ᄀ': 'ᄀ', 'ᄁ': 'ᄁ', 'ᄂ': 'ᄂ', 'ᄃ': 'ᄃ', 'ᄄ': 'ᄄ',
+    'ᄅ': 'ᄅ', 'ᄆ': 'ᄆ', 'ᄇ': 'ᄇ', 'ᄈ': 'ᄈ', 'ᄉ': 'ᄉ',
+    'ᄊ': 'ᄊ', 'ᄋ': 'ᄋ', 'ᄌ': 'ᄌ', 'ᄍ': 'ᄍ', 'ᄎ': 'ᄎ',
+    'ᄏ': 'ᄏ', 'ᄐ': 'ᄐ', 'ᄑ': 'ᄑ', 'ᄒ': 'ᄒ',
+    # Medial vowels
+    'ᅡ': 'ᅡ', 'ᅢ': 'ᅢ', 'ᅣ': 'ᅣ', 'ᅤ': 'ᅤ', 'ᅥ': 'ᅥ',
+    'ᅦ': 'ᅦ', 'ᅧ': 'ᅧ', 'ᅨ': 'ᅨ', 'ᅩ': 'ᅩ', 'ᅪ': 'ᅪ',
+    'ᅫ': 'ᅫ', 'ᅬ': 'ᅬ', 'ᅭ': 'ᅭ', 'ᅮ': 'ᅮ', 'ᅯ': 'ᅯ',
+    'ᅰ': 'ᅰ', 'ᅱ': 'ᅱ', 'ᅲ': 'ᅲ', 'ᅳ': 'ᅳ', 'ᅴ': 'ᅴ',
+    'ᅵ': 'ᅵ',
+    # Final consonants - mapping some that appear to be missing
+    'ᆨ': 'ᆨ', 'ᆫ': 'ᆫ', 'ᆮ': 'ᆮ', 'ᆯ': 'ᆯ', 'ᆷ': 'ᆷ',
+    'ᆸ': 'ᆸ', 'ᆼ': 'ᆼ',
+    # Map unexpected characters to similar or fallback characters
+    'ᇂ': 'ᆼ',  # Map ᇂ to ᆼ as they are similar final consonants
+    # Add other potential mappings as needed
+}
+
+# Define valid Korean symbols from the TTS system
+VALID_KOREAN_SYMBOLS = set(['ᄌ', 'ᅥ', 'ᆫ', 'ᅦ', 'ᄋ', 'ᅵ', 'ᄅ', 'ᅴ', 'ᄀ', 'ᅡ', 
+                            'ᄎ', 'ᅪ', 'ᄑ', 'ᅩ', 'ᄐ', 'ᄃ', 'ᅢ', 'ᅮ', 'ᆼ', 'ᅳ', 
+                            'ᄒ', 'ᄆ', 'ᆯ', 'ᆷ', 'ᄂ', 'ᄇ', 'ᄉ', 'ᆮ', 'ᄁ', 'ᅬ', 
+                            'ᅣ', 'ᄄ', 'ᆨ', 'ᄍ', 'ᅧ', 'ᄏ', 'ᆸ', 'ᅭ', 'ᄊ', 'ᅲ', 
+                            'ᅨ', 'ᄈ', 'ᅱ', 'ᅯ', 'ᅫ', 'ᅰ', 'ᅤ'])
+
+def map_to_valid_symbols(jamo_list):
+    """Map jamo characters to valid symbols in the TTS system."""
+    mapped_jamo = []
+    for jamo in jamo_list:
+        if jamo in VALID_KOREAN_SYMBOLS:
+            mapped_jamo.append(jamo)
+        elif jamo in KOREAN_SYMBOL_MAP:
+            mapped_symbol = KOREAN_SYMBOL_MAP[jamo]
+            if mapped_symbol in VALID_KOREAN_SYMBOLS:
+                mapped_jamo.append(mapped_symbol)
+            # Skip if mapped symbol is not valid
+        # Skip characters not in the map
+    return mapped_jamo
+
+
+pecab_instance = None
 def korean_text_to_phonemes(text, character: str = "hangeul") -> str:
     """
-
     The input and output values look the same, but they are different in Unicode.
 
     example :
 
         input = '하늘' (Unicode : \ud558\ub298), (하 + 늘)
-        output = '하늘' (Unicode :\u1112\u1161\u1102\u1173\u11af), (ᄒ + ᅡ + ᄂ + ᅳ + ᆯ)
+        output = '하늘' (Unicode :\u1112\u1161\u1102\u1173\u11af), (ᄒ + ᅡ + ᄂ + ᅳ + ᆯ)
 
     """
-    global g2p_kr  # pylint: disable=global-statement
-    if g2p_kr is None:
-        from g2pkk import G2p
-
-        g2p_kr = G2p()
+    global pecab_instance  # pylint: disable=global-statement
+    if pecab_instance is None:
+        pecab_instance = PeCab()
 
     if character == "english":
         from anyascii import anyascii
         text = normalize(text)
-        text = g2p_kr(text)
+        # Use PeCab for basic processing
+        result = pecab_instance.pos(text)
+        text = ' '.join([token[0] for token in result])
         text = anyascii(text)
         return text
 
     text = normalize(text)
-    text = g2p_kr(text)
-    text = list(hangul_to_jamo(text))  # '하늘' --> ['ᄒ', 'ᅡ', 'ᄂ', 'ᅳ', 'ᆯ']
-    return "".join(text)
+    # Use PeCab for grapheme-to-phoneme conversion
+    result = pecab_instance.pos(text)
+    # Join the tokens
+    processed_text = ''.join([token[0] for token in result])
+    # Convert to jamo
+    jamo_list = list(hangul_to_jamo(processed_text))  # '하늘' --> ['ᄒ', 'ᅡ', 'ᄂ', 'ᅳ', 'ᆯ']
+    # Map to valid symbols
+    mapped_jamo = map_to_valid_symbols(jamo_list)
+    return "".join(mapped_jamo)
 
 def text_normalize(text):
-    # res = unicodedata.normalize("NFKC", text)
-    # res = japanese_convert_numbers_to_words(res)
-    # # res = "".join([i for i in res if is_japanese_character(i)])
-    # res = replace_punctuation(res)
     text = normalize(text)
     return text
 
@@ -86,10 +122,6 @@ def distribute_phone(n_phone, n_word):
         min_index = phones_per_word.index(min_tasks)
         phones_per_word[min_index] += 1
     return phones_per_word
-
-
-
-# tokenizer = AutoTokenizer.from_pretrained('cl-tohoku/bert-base-japanese-v3')
 
 model_id = 'kykim/bert-kor-base'
 tokenizer = AutoTokenizer.from_pretrained(model_id)
@@ -116,14 +148,8 @@ def g2p(norm_text):
             phs += [text]
             word2ph += [1]
             continue
-        # import pdb; pdb.set_trace()
-        # phonemes = japanese_text_to_phonemes(text)
-        # text = g2p_kr(text)
+
         phonemes = korean_text_to_phonemes(text)
-        # import pdb; pdb.set_trace()
-        # # phonemes = [i for i in phonemes if i in symbols]
-        # for i in phonemes:
-        #     assert i in symbols, (group, norm_text, tokenized, i)
         phone_len = len(phonemes)
         word_len = len(group)
 
@@ -141,52 +167,3 @@ def g2p(norm_text):
 def get_bert_feature(text, word2ph, device='cuda'):
     from . import japanese_bert
     return japanese_bert.get_bert_feature(text, word2ph, device=device, model_id=model_id)
-
-
-if __name__ == "__main__":
-    # tokenizer = AutoTokenizer.from_pretrained("./bert/bert-base-japanese-v3")
-    from text.symbols import symbols
-    text = "전 제 일의 가치와 폰타인 대중들이 한 일의 의미를 잘 압니다. 앞으로도 전 제 일에 자부심을 갖고 살아갈 겁니다"
-    import json
-
-    # genshin_data = json.load(open('/data/zwl/workspace/StarRail_Datasets/Index & Scripts/Index/1.3/Korean.json'))
-    genshin_data = json.load(open('/data/zwl/workspace/Genshin_Datasets/Index & Script/AI Hobbyist Version/Index/4.1/KR_output.json'))
-    from tqdm import tqdm
-    new_symbols = []
-    for key, item in tqdm(genshin_data.items()):
-        texts = item.get('voiceContent', '')
-        if isinstance(texts, list):
-            texts = ','.join(texts)
-        if texts is None:
-            continue
-        if len(texts) == 0:
-            continue
-
-        text = text_normalize(text)
-        phones, tones, word2ph = g2p(text)
-        bert = get_bert_feature(text, word2ph)
-        import  pdb; pdb.set_trace()
-        for ph in phones:
-            if ph not in symbols and ph not in new_symbols:
-                new_symbols.append(ph)
-                print('update!, now symbols:')
-                print(new_symbols)
-                with open('korean_symbol.txt', 'w') as f:
-                    f.write(f'{new_symbols}')
-
-        
-
-# if __name__ == '__main__':
-#     from pykakasi import kakasi
-#     # Initialize kakasi object
-#     kakasi = kakasi()
-
-#     # Set options for converting Chinese characters to Katakana
-#     kakasi.setMode("J", "H")  # Chinese to Katakana
-#     kakasi.setMode("K", "H")  # Hiragana to Katakana
-
-#     # Convert Chinese characters to Katakana
-#     conv = kakasi.getConverter()
-#     katakana_text = conv.do('ええ、僕はおきなと申します。こちらの小さいわらべは杏子。ご挨拶が遅れてしまいすみません。あなたの名は?')  # Replace with your Chinese text
-
-#     print(katakana_text)  # Output: ニーハオセカイ

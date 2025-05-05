@@ -18,7 +18,6 @@ def convert_pad_shape(pad_shape):
     pad_shape = [item for sublist in layer for item in sublist]
     return pad_shape
 
-
 def intersperse(lst, item):
     result = [item] * (len(lst) * 2 + 1)
     result[1::2] = lst
@@ -105,12 +104,6 @@ def fused_add_tanh_sigmoid_multiply(input_a, input_b, n_channels):
     s_act = torch.sigmoid(in_act[:, n_channels_int:, :])
     acts = t_act * s_act
     return acts
-
-
-def convert_pad_shape(pad_shape):
-    layer = pad_shape[::-1]
-    pad_shape = [item for sublist in layer for item in sublist]
-    return pad_shape
 
 
 def shift_1d(x):

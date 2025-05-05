@@ -4,6 +4,7 @@ import re
 import cn2an
 from pypinyin import lazy_pinyin, Style
 
+import jieba.posseg as psg
 from .symbols import punctuation
 from .tone_sandhi import ToneSandhi
 
@@ -12,9 +13,6 @@ pinyin_to_symbol_map = {
     line.split("\t")[0]: line.strip().split("\t")[1]
     for line in open(os.path.join(current_file_path, "opencpop-strict.txt")).readlines()
 }
-
-import jieba.posseg as psg
-
 
 rep_map = {
     "：": ",",
@@ -180,20 +178,3 @@ def get_bert_feature(text, word2ph, device=None):
     from text import chinese_bert
 
     return chinese_bert.get_bert_feature(text, word2ph, device=device)
-
-
-if __name__ == "__main__":
-    from text.chinese_bert import get_bert_feature
-
-    text = "啊！chemistry 但是《原神》是由,米哈\游自主，  [研发]的一款全.新开放世界.冒险游戏"
-    text = text_normalize(text)
-    print(text)
-    phones, tones, word2ph = g2p(text)
-    bert = get_bert_feature(text, word2ph)
-
-    print(phones, tones, word2ph, bert.shape)
-
-
-# # 示例用法
-# text = "这是一个示例文本：,你好！这是一个测试...."
-# print(g2p_paddle(text))  # 输出: 这是一个示例文本你好这是一个测试

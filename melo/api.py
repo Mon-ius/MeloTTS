@@ -1,39 +1,32 @@
-import os
 import re
-import json
 import torch
-import librosa
-import soundfile
-import torchaudio
+import av
 import numpy as np
 import torch.nn as nn
 from tqdm import tqdm
-import torch
 
 from . import utils
-from . import commons
 from .models import SynthesizerTrn
 from .split_utils import split_sentence
-from .mel_processing import spectrogram_torch, spectrogram_torch_conv
 from .download_utils import load_or_download_config, load_or_download_model
 
 class TTS(nn.Module):
     def __init__(self, 
                 language,
                 device='auto',
-                use_hf=True,
                 config_path=None,
                 ckpt_path=None):
         super().__init__()
         if device == 'auto':
             device = 'cpu'
-            if torch.cuda.is_available(): device = 'cuda'
-            if torch.backends.mps.is_available(): device = 'mps'
+            if torch.cuda.is_available(): 
+                device = 'cuda'
+            if torch.backends.mps.is_available(): 
+                device = 'mps'
         if 'cuda' in device:
             assert torch.cuda.is_available()
 
-        # config_path = 
-        hps = load_or_download_config(language, use_hf=use_hf, config_path=config_path)
+        hps = load_or_download_config(language, config_path=config_path)
 
         num_languages = hps.num_languages
         num_tones = hps.num_tones
@@ -55,12 +48,11 @@ class TTS(nn.Module):
         self.hps = hps
         self.device = device
     
-        # load state_dict
-        checkpoint_dict = load_or_download_model(language, device, use_hf=use_hf, ckpt_path=ckpt_path)
+        checkpoint_dict = load_or_download_model(language, device, ckpt_path=ckpt_path)
         self.model.load_state_dict(checkpoint_dict['model'], strict=True)
         
         language = language.split('_')[0]
-        self.language = 'ZH_MIX_EN' if language == 'ZH' else language # we support a ZH_MIX_EN model
+        self.language = 'ZH_MIX_EN' if language == 'ZH' else language
 
     @staticmethod
     def audio_numpy_concat(segment_data_list, sr, speed=1.):
@@ -80,19 +72,11 @@ class TTS(nn.Module):
             print(" > ===========================")
         return texts
 
-    def tts_to_file(self, text, speaker_id, output_path=None, sdp_ratio=0.2, noise_scale=0.6, noise_scale_w=0.8, speed=1.0, pbar=None, format=None, position=None, quiet=False,):
+    def tts_to_file(self, text, speaker_id, output_path=None, sdp_ratio=0.2, noise_scale=0.6, noise_scale_w=0.8, speed=1.0, quiet=False,):
         language = self.language
         texts = self.split_sentences_into_pieces(text, language, quiet)
         audio_list = []
-        if pbar:
-            tx = pbar(texts)
-        else:
-            if position:
-                tx = tqdm(texts, position=position)
-            elif quiet:
-                tx = texts
-            else:
-                tx = tqdm(texts)
+        tx = tqdm(texts)
         for t in tx:
             if language in ['EN', 'ZH_MIX_EN']:
                 t = re.sub(r'([a-z])([A-Z])', r'\1 \2', t)
@@ -129,7 +113,51 @@ class TTS(nn.Module):
         if output_path is None:
             return audio
         else:
-            if format:
-                soundfile.write(output_path, audio, self.hps.data.sampling_rate, format=format)
+            if audio.ndim == 1:
+                audio = audio.reshape(-1, 1)
+                channels = 1
+                layout = 'mono'
+            elif audio.ndim == 2:
+                channels = audio.shape[1]
+                layout = 'stereo' if channels == 2 else 'mono'
             else:
-                soundfile.write(output_path, audio, self.hps.data.sampling_rate)
+                raise ValueError(f"Unsupported audio data shape: {audio.shape}")
+            
+            if audio.dtype != np.float32:
+                audio = audio.astype(np.float32)
+            
+            if np.max(np.abs(audio)) > 1.0:
+                audio = audio / np.max(np.abs(audio))
+            
+            codec_name = 'pcm_s16le'
+            
+            output_container = av.open(output_path, 'w')
+            audio_stream = output_container.add_stream(codec_name, rate=self.hps.data.sampling_rate)
+            if hasattr(audio_stream, 'layout'):
+                audio_stream.layout = layout
+            
+            chunk_size = 1024
+            total_samples = audio.shape[0]
+            
+            for start in range(0, total_samples, chunk_size):
+                end = min(start + chunk_size, total_samples)
+                chunk = audio[start:end]
+                
+                chunk = (chunk * 32767).astype(np.int16)
+                
+                chunk = chunk.T
+                
+                frame = av.AudioFrame.from_ndarray(
+                    chunk, 
+                    format='s16',
+                    layout=layout
+                )
+                frame.sample_rate = self.hps.data.sampling_rate
+                
+                for packet in audio_stream.encode(frame):
+                    output_container.mux(packet)
+            
+            for packet in audio_stream.encode(None):
+                output_container.mux(packet)
+            
+            output_container.close()
